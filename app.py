@@ -7,7 +7,7 @@ import re
 
 st.set_page_config(page_title='Keyword Collector')
 
-st.title('hi steph ur cute')
+st.title('Keyword Finder')
 st.markdown("""
             I created this project to help others navigate job descriptions and tailor their resumes.
 
