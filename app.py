@@ -5,8 +5,9 @@ import numpy as np
 import nltk
 import re
 import pdfplumber
+import pickle
 
-st.set_page_config(page_title='Keyword Finder')
+st.set_page_config(page_title='Resume Review')
 
 def clean_text(text):
     text = re.sub('\n', ' ', text)  # Remove '\n'
@@ -20,12 +21,12 @@ def clean_text(text):
     return text
 
 def remove_stopwords(text):
-    stopwords = nltk.corpus.stopwords.words('english')
+    with open ('stopwords', 'rb') as file:
+        stopwords = pickle.load(file)
     text = text.split()
-    # text = ['The']
     stopwords_removed = [word for word in text if word not in stopwords]
     return stopwords_removed
-st.title('Keyword Finder')
+st.title('Resume Review')
 st.markdown("""
             I created this project to help others navigate job descriptions and tailor their resumes.
 
@@ -63,6 +64,7 @@ if job_description != '':
     # Create button to see keywords
     if st.button(label='View Keywords'):
         st.dataframe(top_keywords)
+
 
 ## ----------------------------------------------------------------------------------------------
 # RESUME
