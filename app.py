@@ -1,4 +1,5 @@
 from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,6 +7,8 @@ import nltk
 import re
 import pdfplumber
 import pickle
+import openai
+import os
 
 st.set_page_config(page_title='Resume Review')
 
@@ -25,7 +28,54 @@ def remove_stopwords(text):
         stopwords = pickle.load(file)
     text = text.split()
     stopwords_removed = [word for word in text if word not in stopwords]
-    return stopwords_removed
+    return ' '.join(stopwords_removed)
+
+def get_keywords(job_description):
+    # generate candidate phrases using GPT-3
+    response = openai.Completion.create(
+    engine="text-davinci-003",
+    prompt=f"Find the top 20 keywords separated by a comma in the following text:\n{job_description}\nKeywords:",
+    max_tokens=150,
+    # n=1,
+    # stop=None,
+    temperature=0.5,
+    )
+
+    # extract candidate phrases from response
+    keywords = response.choices[0].text
+    keywords = keywords.strip()
+    keywords = keywords.split(', ')
+
+    return keywords
+
+def compare_texts(text1, text2):
+    model_engine = "text-davinci-003"
+    prompt = f"""
+    Compare the similarity of two texts:\n\n
+    Job Description: {text1}\n\n
+    Resume: {text2}\n\n
+    Give a score from 0 to 100 where 0 means the resume contains none of the keywords from the job description and 100 means the resume contains most of the keywords from the job description.
+    Give a brief explanation why you gave that score without providing the keywords.
+    Output your response as follows:
+
+    Score: [score]\n
+    Explanation: [Reason why you gave that score]
+    """
+    response = openai.Completion.create(
+        engine=model_engine,
+        prompt=prompt,
+        temperature=0.5,
+        max_tokens=200,
+        # n=1,
+        # stop=None,
+    )
+
+    result = response.choices[0].text.strip()
+    return result
+
+# Get OpenAI's API key from environment variable
+openai.api_key = os.environ['openai']
+
 st.title('Resume Review')
 st.markdown("""
             I created this project to help others navigate job descriptions and tailor their resumes.
@@ -36,34 +86,67 @@ st.markdown("""
 ## ----------------------------------------------------------------------------------------------
 # JOB DESCRIPTION
 job_description = st.text_input(label='Copy and paste the job description below:')
+n_words = st.slider("Number of keywords", min_value=5, max_value=20, value=10)
 
 if job_description != '':
-    job_description_cleaned = clean_text(job_description)
-    word_list = remove_stopwords(job_description_cleaned)
+    job_description_words = clean_text(job_description)
+    job_description_cleaned = remove_stopwords(job_description_words)
 
-    vectorizer = CountVectorizer()
+## ----------------------------------------------------------------------------------------------
+    ## NOTE:
+    ## My first attempt used the CountVectorizer to calculate the word frequency and use the most frequent words as the keywords
+    ## Issues arose when certain keywords were shown only once even though they were important to the role
+    ## I will keep my original code here but comment it out
 
-    X = vectorizer.fit_transform(word_list)
+    # vectorizer = CountVectorizer()
+    # X = vectorizer.fit_transform(job_description_cleaned)
+    # words = vectorizer.get_feature_names_out()
+    # frequency = X.toarray().sum(axis=0)
 
-    words = vectorizer.get_feature_names_out()
-    frequency = X.toarray().sum(axis=0)
+    # data = {
+    #         'Keyword': words,
+    #         'Frequency': frequency
+    #         }
 
-    data = {
-            'Keyword': words,
-            'Frequency': frequency
-            }
+    # # Create a DataFrame 
+    # df = pd.DataFrame(data=data)
 
-    # Create a DataFrame 
-    df = pd.DataFrame(data=data)
+    # # Sort the keywords by frequency and save the top 25%
+    # words = df.sort_values(by='Frequency', ascending=False).reset_index(drop=True)
+    # twenty_five_percent = int(len(words)*0.25)
+    # top_keywords = words[:twenty_five_percent]
+## ----------------------------------------------------------------------------------------------
+    ## New Strategy
+    ## I decided to utilize GPT-3 to generate the keywords
+    keywords = get_keywords(job_description_cleaned)
 
-    # Sort the keywords by frequency and save the top 25%
-    words = df.sort_values(by='Frequency', ascending=False).reset_index(drop=True)
-    twenty_five_percent = int(len(words)*0.25)
-    top_keywords = words[:twenty_five_percent]
+    ## NOTE: 
+    ## I used TF-IDF vectorizer to run a second analysis on the keywords, but it wasn't getting the results I expected
+
+    # # create TF-IDF vectorizer and fit on input text
+    # vectorizer = TfidfVectorizer(ngram_range=(1, 2))
+    # vectorizer.fit([job_description_cleaned])
+
+    # # transform candidate phrases into TF-IDF vectors
+    # vectors = vectorizer.transform(keywords)
+
+    # # compute TF-IDF scores for candidate phrases
+    # scores = vectors.sum(axis=0)
+    # scores = scores.tolist()[0]
+
+    # # pair candidate phrases with their TF-IDF scores and sort by score
+    # results = list(zip(vectorizer.get_feature_names(), scores))
+    # results = sorted(results, key=lambda x: x[1], reverse=True)
+    # st.dataframe({
+    #     "Keyword": keywords
+    #     })
+
 
     # Create button to see keywords
     if st.button(label='View Keywords'):
-        st.dataframe(top_keywords)
+        df = pd.DataFrame({"Keyword": keywords[:n_words]})
+        df.index += 1
+        st.dataframe(df)
 
 
 ## ----------------------------------------------------------------------------------------------
@@ -94,24 +177,26 @@ if st.button(label='Compare'):
         missing_words = []
 
         # Iterate through top job description keywords
-        for word in top_keywords['Keyword']:
+        for word in keywords[:n_words]:
             # Check if keyword is in the resume 
-            if word in cleaned_text.split():
+            if word in cleaned_text:
                 n_keywords += 1
                 included_words.append(word)
             # If the keyword is not in the resume
             else:
                 missing_words.append(word)
 
-        st.subheader('Results')
+        st.subheader('Results Based on Keywords')
 
-        percentage = (n_keywords/twenty_five_percent)*100
+        percentage = (n_keywords/n_words)*100
         st.subheader(f'{round(percentage, 1)}%')
-        st.markdown(f'Your resume contains {n_keywords} of the top {twenty_five_percent} keywords found in the job description.')
+        st.markdown(f'Your resume contains {n_keywords} of the top {n_words} keywords found in the job description.')
         st.markdown(f'The keywords **included** in your resume are: {", ".join([word.capitalize() for word in included_words])}')
         st.markdown(f'The following words are *missing* from your resume: {", ".join([word.capitalize() for word in missing_words])}')
 
-        ## TODO Place a higher weight on the most frequent keywords 
+        st.subheader('GPT-3 Rating')
+        score = compare_texts(job_description_cleaned, cleaned_text)
+        st.write(score)
 
     else:
         st.text('Please add a job description and upload your resume and try again.')
